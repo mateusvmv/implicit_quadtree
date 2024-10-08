@@ -42,11 +42,8 @@ pub fn morton_reverse(z: u64) -> (u32, u32) {
     (collapse_bits(z >> 1), collapse_bits(z))
 }
 
-const BIT_POSITION_INIT: u64 = 0x8000000000000000;
-const LOAD_MASK_INIT: u64 = 0x5555555555555555;
-const LOAD_ONES_INIT: u64 = 0x2aaaaaaaaaaaaaaa;
-const ODDS: u64 = 0xaaaaaaaaaaaaaaaa;
-const EVENS: u64 = 0x5555555555555555;
+const X_DIM: u64 = 0xAAAAAAAAAAAAAAAA;
+const Y_DIM: u64 = 0x5555555555555555;
 
 pub struct ZOrderIndexer {
     z: (u64, u64),
@@ -76,9 +73,10 @@ impl ZOrderIndexer {
         &self.z
     }
     pub fn contains(&self, z: u64) -> bool {
-        let (x, y) = (z & ODDS, z & EVENS);
-        x >= self.z.0 & ODDS && x <= self.z.1 & ODDS &&
-            y >= self.z.0 & EVENS && y <= self.z.1 & EVENS
+        [X_DIM, Y_DIM].iter()
+            .all(|dim| 
+                z & dim >= self.z.0 & dim &&
+                z & dim <= self.z.1 & dim)
     }
     pub fn next_zorder_index(&self, z: u64) -> Option<u64> {
         if self.contains(z + 1) {
@@ -86,31 +84,44 @@ impl ZOrderIndexer {
         }
         let mut bigmin = None;
         let (mut min_v, mut max_v) = self.z;
-        let mut bit_position = 1<<63;
-        let mut load_mask = LOAD_MASK_INIT;
-        let mut load_ones = LOAD_ONES_INIT;
-        while bit_position > 0 {
-            let k = ((z & bit_position > 0) as usize) << 2
-                | ((min_v & bit_position > 0) as usize) << 1
-                | (max_v & bit_position > 0) as usize;
-            match k {
-                0 => (),
-                1 => {
-                    bigmin = Some(min_v & load_mask | bit_position);
+        // One in the current dimension, and in the past bits (to the left)
+        let mut load_mask = Y_DIM;
+        // One in all dimensions but the current one, except in the past bits, which are zero
+        let mut load_ones = X_DIM;
+        // Each bit draws an axis in some dimension, that we use to narrow down our search space
+        for bit in (0..64).rev() {
+            let z_bit = z >> bit & 1;
+            let i_bit = min_v >> bit & 1;
+            let a_bit = max_v >> bit & 1;
+            match (z_bit, i_bit, a_bit) {
+                // If all values are before the axis, we do nothing
+                (0, 0, 0) => (),
+                // If our target is before and the max is after
+                // We set our candidate to be the first value after the axis
+                // And move our search bounds to be before the axis
+                (0, 0, 1) => {
+                    bigmin = Some(min_v & load_mask | (1<<bit));
                     max_v = max_v & load_mask | load_ones;
                 },
-                3 => return Some(min_v),
-                4 => return bigmin,
-                5 => {
-                    min_v = min_v & load_mask | bit_position;
+                // If our target is before the search area,
+                // the result the minimum of the search area.
+                (0, 1, 1) => return Some(min_v),
+                // If our target is after the search area,
+                // the result is the candidate, the first value within the area
+                (1, 0, 0) => return bigmin,
+                // If our target is after and our min is before
+                // We move our search bounds to after the axis
+                // We don't set a candidate, because it would be before the target
+                (1, 0, 1) => {
+                    min_v = min_v & load_mask | (1<<bit);
                 },
-                7 => (),
+                // If all values are past the axis, we do nothing
+                (1, 1, 1) => (),
                 _ => unreachable!()
             }
-            bit_position >>= 1;
             load_ones >>= 1;
             load_mask >>= 1;
-            load_mask |= BIT_POSITION_INIT;
+            load_mask |= 1<<63;
         }
         bigmin
     }
