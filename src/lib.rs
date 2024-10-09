@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_4d;
+
 mod morton;
 
 pub use morton::*;
@@ -41,21 +44,25 @@ impl QuadTree {
     pub fn insert(&mut self, point: (f32, f32)) {
         let x = ordered_float(point.0);
         let y = ordered_float(point.1);
-        let z_index = morton(x, y);
+        let z_index = morton_2(x, y);
         self.tree.insert(z_index, point);
     }
 
     pub fn query(&self, min: (u32, u32), max: (u32, u32)) -> impl Iterator<Item = &(f32, f32)> {
-        let zi = ZOrderIndexer::new(min, max);
+        let zi = ZOrderIndexer::<2>::new(min, max);
         let (min, max) = *zi.bounds();
         let mut cursor = self.tree.range(min ..= max);
+        let mut missed = 0;
         std::iter::from_fn(move || {
             loop {
                 let Some((k, p)) = cursor.next() else { break };
                 if !zi.contains(*k) {
+                    missed += 1;
+                    if missed < 32 { continue };
                     let Some(k) = zi.next_zorder_index(*k) else { break };
                     cursor = self.tree.range(k ..= max);
                 } else {
+                    missed = 0;
                     return Some(p)
                 }
             }
@@ -80,7 +87,7 @@ impl QuadTree {
         let square_dist = move |p: (u32, u32)| u32::max(u32::abs_diff(p.0, x), u32::abs_diff(p.1, y));
         let square_dist = move |p: (f32, f32)| square_dist((ordered_float(p.0), ordered_float(p.1)));
         let chebyshev = move |p: (f32, f32)| ordered_float(f32::max(f32::abs(p.0 - point.0), f32::abs(p.1 - point.1)));
-        let z = morton(x, y);
+        let z = morton_2(x, y);
         let mut a = self.tree.range(..z).rev()
             .map(move |(_, p)| (square_dist(*p), p))
             .peekable();
@@ -102,26 +109,27 @@ impl QuadTree {
                     return Some(p);
                 }
                 let (distance, _) = (&mut iter).filter(|(d, _)| *d >= min_dist).take(8).max_by_key(|t| t.0)?;
-                let t = ZOrderIndexer::new(
+                let t = ZOrderIndexer::<2>::new(
                     (x - distance, y - min_dist + 1),
                     (x - min_dist, y + min_dist - 1),
                 );
-                let b = ZOrderIndexer::new(
+                let b = ZOrderIndexer::<2>::new(
                     (x + min_dist, y - min_dist + 1),
                     (x + distance, y + min_dist - 1),
                 );
-                let l = ZOrderIndexer::new(
+                let l = ZOrderIndexer::<2>::new(
                     (x - distance, y - distance),
                     (x + distance, y - min_dist),
                 );
-                let r = ZOrderIndexer::new(
+                let r = ZOrderIndexer::<2>::new(
                     (x - distance, y + min_dist),
                     (x + distance, y + distance),
                 );
-                let min = morton(x - distance, y - distance);
-                let max = morton(x + distance, y + distance);
+                let min = morton_2(x - distance, y - distance);
+                let max = morton_2(x + distance, y + distance);
                 let mut cursor = self.tree.range(min ..= max);
                 let mut zis = vec![t, b, l, r];
+                let mut missed = 0;
                 zis.sort_by_key(|zi| zi.bounds().0);
                 loop {
                     let Some((k, p)) = cursor.next() else { break };
@@ -130,11 +138,14 @@ impl QuadTree {
                     while j < zis.len() && zis[j].bounds().0 <= *k { j += 1 };
                     let zis = &zis[..j];
                     if !zis.iter().any(|zi| zi.contains(*k)) {
+                        missed += 1;
+                        if missed < 32 { continue };
                         let Some(k) = zis.iter()
                             .filter_map(|zi| zi.next_zorder_index(*k))
                             .min() else { break };
                         cursor = self.tree.range(k ..= max);
                     } else {
+                        missed = 0;
                         queue.push(p);
                     }
                 }

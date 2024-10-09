@@ -8,10 +8,15 @@ rand = "0.8.5"
 
 [dev-dependencies]
 kdtree = "0.7.0"
+rstar = "0.12.0"
 criterion = "0.5.1"
 
 [[bench]]
 name = "benches"
+harness = false
+
+[[bench]]
+name = "4d_benches"
 harness = false
 
 [profile.bench]

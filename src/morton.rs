@@ -1,4 +1,3 @@
-
 pub fn ordered_float(f: f32) -> u32 {
     let x = f.to_bits();
     if x & (1<<31) == 0 {
@@ -15,8 +14,7 @@ pub fn ordered_float_reverse(x: u32) -> f32 {
     }
 }
 
-
-fn spread_bits(mut input: u32) -> u64 {
+fn spread_bits_2(mut input: u32) -> u64 {
     let mut output = 0;
     for _ in 0..32 {
         output = (output << 2) | (input & 1) as u64;
@@ -25,7 +23,7 @@ fn spread_bits(mut input: u32) -> u64 {
     output.reverse_bits()
 }
 
-fn collapse_bits(mut input: u64) -> u32 {
+fn collapse_bits_2(mut input: u64) -> u32 {
     let mut output = 0;
     for _ in 0..32 {
         output = (output << 1) | (input & 1) as u32;
@@ -34,60 +32,110 @@ fn collapse_bits(mut input: u64) -> u32 {
     output.reverse_bits()
 }
 
-pub fn morton(x: u32, y: u32) -> u64 {
-    spread_bits(x) | spread_bits(y) >> 1
+pub fn morton_2(x: u32, y: u32) -> u64 {
+    spread_bits_2(x) | spread_bits_2(y) >> 1
 }
 
-pub fn morton_reverse(z: u64) -> (u32, u32) {
-    (collapse_bits(z >> 1), collapse_bits(z))
+pub fn morton_reverse_2(z: u64) -> (u32, u32) {
+    (collapse_bits_2(z >> 1), collapse_bits_2(z))
 }
 
-const X_DIM: u64 = 0xAAAAAAAAAAAAAAAA;
-const Y_DIM: u64 = 0x5555555555555555;
 
-pub struct ZOrderIndexer {
-    z: (u64, u64),
-}
-
-impl ZOrderIndexer {
-    pub fn from_morton(min: u64, max: u64) -> Self {
-        Self { z: (min, max) }
+fn spread_bits_4(mut input: u16) -> u64 {
+    let mut output = 0;
+    for _ in 0..16 {
+        output = (output << 4) | (input & 1) as u64;
+        input >>= 1;
     }
+    output.reverse_bits()
+}
+
+fn collapse_bits_4(mut input: u64) -> u16 {
+    let mut output = 0;
+    for _ in 0..16 {
+        output = (output << 1) | (input & 1) as u16;
+        input >>= 4;
+    }
+    output.reverse_bits()
+}
+
+pub fn morton_4(x: u16, y: u16, z: u16, w: u16) -> u64 {
+    spread_bits_4(x) |
+    spread_bits_4(y) >> 1 |
+    spread_bits_4(z) >> 2 |
+    spread_bits_4(w) >> 3
+}
+
+pub fn morton_reverse_4(z: u64) -> (u16, u16, u16, u16) {
+    (
+        collapse_bits_4(z >> 3),
+        collapse_bits_4(z >> 2),
+        collapse_bits_4(z >> 1),
+        collapse_bits_4(z)
+    )
+}
+
+const fn dim_masks<const D: usize>() -> [u64; D] {
+    let mut masks = [0; D];
+    masks[D-1] = 1;
+    let mut shf = D;
+    while shf < 64 {
+        masks[D-1] |= masks[D-1] << shf;
+        shf *= 2;
+    }
+    let mut i = D-1;
+    while i > 0 {
+        masks[i-1] = masks[i] << 1;
+        i -= 1;
+    }
+    masks
+}
+
+pub struct ZOrderIndexer<const D: usize>((u64, u64));
+
+type Point16 = (u16, u16);
+type Rect16 = (Point16, Point16);
+
+impl ZOrderIndexer<2> {
     pub fn new(min: (u32, u32), max: (u32, u32)) -> Self {
-        assert!(min.0 <= max.0 && min.1 <= max.1);
-        let z = (morton(min.0, min.1), morton(max.0, max.1));
-        assert!(z.0 <= z.1);
-        Self { z }
+        let min = morton_2(min.0, min.1);
+        let max = morton_2(max.0, max.1);
+        Self::from_morton(min, max)
     }
-    pub fn from_float(min: (f32, f32), max: (f32, f32)) -> Self {
-        let x = (ordered_float(min.0), ordered_float(min.1));
-        let y = (ordered_float(max.0), ordered_float(max.1));
-        Self::new(x, y)
+}
+
+impl ZOrderIndexer<4> {
+    pub fn new(min: Rect16, max: Rect16) -> Self {
+        let min = morton_4(min.0.0, min.0.1, min.1.0, min.1.1);
+        let max = morton_4(max.0.0, max.0.1, max.1.0, max.1.1);
+        Self::from_morton(min, max)
     }
-    pub fn from_aabb(range: &crate::AABB) -> Self {
-        let min = (range.0.0 - range.1, range.0.1 - range.1);
-        let max = (range.0.0 + range.1, range.0.1 + range.1);
-        Self::from_float(min, max)
+}
+impl<const D: usize> ZOrderIndexer<D> {
+    const DIMS: [u64; D] = dim_masks::<D>();
+    pub fn from_morton(min: u64, max: u64) -> Self {
+        assert!(Self::DIMS.iter().all(|dim| min & dim <= max & dim));
+        Self((min, max))
     }
     pub fn bounds(&self) -> &(u64, u64) {
-        &self.z
+        &self.0
     }
     pub fn contains(&self, z: u64) -> bool {
-        [X_DIM, Y_DIM].iter()
-            .all(|dim| 
-                z & dim >= self.z.0 & dim &&
-                z & dim <= self.z.1 & dim)
+        Self::DIMS.iter().all(|dim|
+            z & dim >= self.0.0 & dim &&
+            z & dim <= self.0.1 & dim)
     }
     pub fn next_zorder_index(&self, z: u64) -> Option<u64> {
         if self.contains(z + 1) {
             return Some(z + 1);
         }
         let mut bigmin = None;
-        let (mut min_v, mut max_v) = self.z;
-        // One in the current dimension, and in the past bits (to the left)
-        let mut load_mask = Y_DIM;
-        // One in all dimensions but the current one, except in the past bits, which are zero
-        let mut load_ones = X_DIM;
+        let (mut min_v, mut max_v) = self.0;
+        // One in all dimensions but the current one, and in all past bits
+        // Preserves the value of those bits, zeros the current dimension
+        let mut load_mask = !Self::DIMS[0];
+        // One in the current dimension, except past bits
+        let mut load_ones = Self::DIMS[0] >> D;
         // Each bit draws an axis in some dimension, that we use to narrow down our search space
         for bit in (0..64).rev() {
             let z_bit = z >> bit & 1;

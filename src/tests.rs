@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_indexer() {
-    let zi = ZOrderIndexer::from_morton(0, 6);
+    let zi = ZOrderIndexer::<2>::from_morton(0, 6);
     for i in 0..4 {
         assert!(zi.contains(i));
     }
@@ -24,8 +24,8 @@ fn test_morton() {
     // Testing a range of values for x and y
     for x in 0..16 {
         for y in 0..16 {
-            let z = morton(x, y);
-            let (xr, yr) = morton_reverse(z);
+            let z = morton_2(x, y);
+            let (xr, yr) = morton_reverse_2(z);
             assert_eq!((x, y), (xr, yr), "Failed for (x={}, y={}): got (x={}, y={}) for (z={})", x, y, xr, yr, z);
         }
     }
