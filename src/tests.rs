@@ -74,7 +74,7 @@ fn test_count_neighbors_correctness() {
 #[test]
 fn nns() {
     let mut rng = rand::thread_rng();
-    for _ in 0..10 {
+    for _ in 0..100 {
         let num_points = rng.gen_range(100..1000);
 
         let mut tree = kdtree::KdTree::new(2);
@@ -84,18 +84,18 @@ fn nns() {
             quad.insert(p);
             tree.add([p.0, p.1], p).unwrap();
         }
-        fn chebyshev(a: &[f32], b: &[f32]) -> f32 {
-            let mut r: f32 = 0.0;
+        fn square_dist(a: &[f32], b: &[f32]) -> f32 {
+            let mut r: u32 = 0;
             for i in 0..a.len().min(b.len()) {
-                r = r.max((a[i] - b[i]).abs());
+                r = r.max(u32::abs_diff(ordered_float(a[i]), ordered_float(b[i])));
             }
-            r
+            r as f32
         }
-        let a = tree.nearest(&[50.0, 50.0], 10, &chebyshev).unwrap();
+        let a = tree.nearest(&[50.0, 50.0], 100, &square_dist).unwrap();
         let a: Vec<_> = a.into_iter().map(|t| t.1).collect();
-        let b: Vec<_> = quad.nearest((50.0, 50.0)).take(10).collect();
-        eprintln!("{:?}", a.iter().map(|p| chebyshev(&[50.0, 50.0], &[p.0, p.1])).collect::<Vec<_>>());
-        eprintln!("{:?}", b.iter().map(|p| chebyshev(&[50.0, 50.0], &[p.0, p.1])).collect::<Vec<_>>());
+        let b: Vec<_> = quad.nearest((50.0, 50.0)).take(100).collect();
+        eprintln!("{:?}", a.iter().map(|p| square_dist(&[50.0, 50.0], &[p.0, p.1])).collect::<Vec<_>>());
+        eprintln!("{:?}", b.iter().map(|p| square_dist(&[50.0, 50.0], &[p.0, p.1])).collect::<Vec<_>>());
         assert_eq!(a, b);
     }
 }
